@@ -1,0 +1,241 @@
+---
+title: "Survival Analysis Project Joos Korstanje"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+For this analysis, the packages `survival` and `glmnet` have to be installed and loaded.
+```{r, eval = TRUE, message = FALSE}
+require(survival)
+require(glmnet)
+```
+
+##1. Description of the data
+
+The data set exists of 226 subjects that have undergone a treatment after diagnosis of colorectal cancer. The ID number of this publicly available data set is ges14333. The version of the data set used for this paper has been prepared by the DSTI teacher A. Fabio Di Narzo.
+
+There are two parts in the data: clinical data and gene expression. Both parts will be shortly described.
+
+###Clinical data
+The clinical data exists of 226 observations and 9 variables:  
+- sample identifier for each participant  
+- location of where the biopsy was taken: rectum, colon, left, right)  
+- stage of the cancer: based on the dukes staging method  
+- age of the diagnosis  
+- gender  
+- survival time (dfs_time and dfs_event). dfs is disease free survival: how long was the patient without the disease. In practice this works like this. The patient comes into the hospital with colorectal cancer and gets a treatment (surgery) and then the time is measured how long it takes for the tumor not to come back. dfs_event: 1 is an event (cancer came back), 0 is censored (person got lost from the study, or did not experience an event at the end of the study)  
+- adjXRT: did the patient go through xray therapy (yes or no)  
+- adjCTX: did the patient go through chemo therapy (yes or no)  
+To avoid confusion, note that all subjects had surgery to remove the tumor. Then, according to what the doctor judged, they got xray, or chemo, or both.
+
+###Gene expression
+The gene expression exists of 226 rows, one per subject and 54675 columns. Each column is a feature. For simplification, this can be considered as a gene. It has a value about the amount of expression that there was.
+
+
+##2. Data preparation
+###2.1. Getting the data
+The first step is loading the data.
+```{r, eval = FALSE, echo = FALSE}
+getwd()
+knitr::opts_knit$set(root.dir = "C:/Users/joos/Desktop/survival")
+getwd()
+#setwd("C:/Users/joos/Desktop/survival")
+```
+
+```{r, eval = TRUE, echo = TRUE}
+load("CRC_226_GSE14333.RData")
+```
+
+###2.2. Preparing the data
+
+In order to do the data analysis, the order of patients in the data frame `clinical_data` and in the matrix `gene_expression` should be the same. To make sure this is the case, the patients IDs in both objects will be ordered alphabetically.
+
+###Ordering the `clinical_data`
+The patients IDs are in the column `sampleID`.
+```{r, eval = TRUE, echo = TRUE}
+clinical_data.ordered = clinical_data[order(clinical_data$sampleID),] 
+```
+
+###Ordering the `gene_expression`
+The patient IDs are the rownames.
+```{r, eval = TRUE, echo = TRUE}
+gene_expression.ordered = gene_expression[order(rownames(gene_expression)), ] 
+```
+
+
+
+##3. Exploratory analysis: Descriptive statistics
+
+###3.1. Descriptive statistics of the clinical_data
+
+The summary gives frequency tables for categorical variables and several descriptive statistics for the quantitative variables.
+```{r, eval = TRUE, echo = TRUE}
+summary(clinical_data.ordered)
+```
+
+####Location:
+Something to note for later analysis is that there have been only two samples taken in the colon. In general the number of samples per location is very different between all locations.
+
+####Dukes stage:
+In the stages, we also see a serious difference in number of observations, mainly concerning stage A, which is much less present.
+
+####Gender:
+The number of observations per gender seem to be reasonably equal.
+
+####Treatments (`adjXRT` and `adjCTX`):
+Sample sizes are rather unequal for these two treatments as well. Much more people have not had X-ray than that did. Also much more people have not had chemo than that did.
+
+It is interesting to look whether there is a relation between these treatments, using a two-way table:
+
+```{r, eval.after='fig.cap'}
+table(XRay = clinical_data.ordered$adjXRT, Chemo = clinical_data.ordered$adjCTX)
+
+```
+
+It should be noted that there is only one person that had X-Ray, but no Chemo.
+
+
+For the quantitative variables, a graphical representation is a better way of describing the sample. For `age_diag` a histogram will show the age distribution of the participants. 
+```{r, eval = TRUE, echo = TRUE}
+hist(clinical_data$age_diag)
+```
+The age distribution is skewed to the left. This appears logical, seen the nature of our data. The data contains only people with cancer. Young people can develop cancer, but relatively older people are (intuitively) more likely to develop cancer. Above a certain age, the sample is logically smaller, because people are likely to have experienced death (for whichever reason).
+
+For the time of death (`dfs_time`) and the type of event (`dfs_event`), the Kaplan Meier curve is easier to interpret.
+```{r, eval = TRUE, echo = TRUE}
+Y = Surv(clinical_data$dfs_time, clinical_data$dfs_event)
+KM.fit = survfit(Y ~ 1)
+plot(KM.fit, mark.time = TRUE, xlab = "Time (months)", ylab = "Survival (percent)")
+title("Kaplan Meier curve for all data")
+```
+
+It is important to see how many of the participants have been censored or have experienced an event.
+
+```{r}
+table("1: Event, 0: Censored" = clinical_data$dfs_event)
+```
+
+In this case, there does not seem to be a problem.
+
+
+###3.2. Description of the gene expression data 
+The matrix of gene expression data contains too many variables to get a good overview at once. In order to get a good idea of what the data looks like, the summary statistics of the first twenty-five variables has been shown here.
+```{r, eval = TRUE, echo = TRUE}
+summary(gene_expression.ordered[,1:25])
+```
+It appears that gene expression takes continuous values, in general positive, but in some cases also negative.
+
+The `str` fucntion can also give more information about the data we are dealing with.
+```{r, eval = TRUE, echo = TRUE}
+str(gene_expression.ordered)
+```
+
+
+##4. Questions, methods and results
+
+The goal of this analysis is to find out whether there are any genes (features) that have an effect on disease free survival time of colorectal cancer after surgery. The data set contains data on expression of many genes, which makes that there are many more variables than observations. Classical inference using the Cox Proportional Hazards model is therefore not suitable.  
+If any (combination of) genes has predictive value on disease free survival time, treatment methods may be developed on the basis of this information. Also, practicioners may benefit from this information in assigning treatments. For this question, it would be interesting to look at inferential interaction model between the genes and the treatments. However, at this moment, the literature on inference with penalized regression is not yet very developed (see for example Kim, Pan and Shen, 2014, or Lockhart et al. 2014).  
+The results have to work outside of the current data set as well, so the results have to be well generalizable. To do this, for the estimation of the model, ten-fold cross-validation will be used. Also, by splitting the data in a training part and a test part, we will do a validation by doing a regression of the Y values in the test sample on the risk scores based on the model (estimated using training data) applied to the X values in the test sample. Only if the model validates on the training set, we will be able to conclude that the idnetified genes really have an effect on survival and that any investment in further research would be beneficial.
+
+###Splitting data
+70% seems a reasonable size for a training sample. From the 226 observation, 159 randomly chosen subject will be used as the training sample.
+
+First, we generate the random sample in the clinical_data:
+```{r, eval = TRUE, echo = TRUE}
+set.seed(1234)
+
+#Create a vector of the row numbers that will be used.
+rownsamples = sample(nrow(clinical_data.ordered), 159)
+
+#Create the clinical_data training data
+clinical_data.train = clinical_data.ordered[rownsamples, ]
+
+#Create the clinical_data test data, using the observations that have not been randomly selected
+clinical_data.test = clinical_data.ordered[-rownsamples, ]
+```
+
+Then we generate the random sample in the gene_expression. It is important to note that the subjects have to be the same subjects as in the subsetting of te clinical_data.
+```{r, eval = TRUE, echo = TRUE}
+
+#Create the gene_expression training data
+gene_expression.train = gene_expression.ordered[rownsamples, ]
+
+#Create the gene_expression test data
+gene_expression.test = gene_expression.ordered[-rownsamples, ]
+```
+
+
+
+###Estimating the training model
+Since there are very many variables in the gene_expression data, it is necessary to use a penalized Cox Proportional Hazards model. The model will be estimated using the 10-fold cross-validation function of the `glmnet` package. It is an efficient way for doing this calculation.  
+We first have to choose an appropriate value for the penalization. A quick way to calculate this is to use the glmnet package.  
+
+```{r, eval = TRUE, echo = TRUE}
+
+fit.coxph = cv.glmnet(gene_expression.train, 
+                   Surv(clinical_data.train$dfs_time, clinical_data.train$dfs_event), 
+                   family = "cox")
+plot(fit.coxph)
+title("Choosing the value for the penalization term")
+```
+
+There are now two values that seem logical to choose. It would either be the minimum deviance (which generally selects a slightly too high number of variables), or the minimum deviance + one standard error. Since the goal of the analysis is to find genes that are possibly related, it is in this case considered relevant to prefer selecting a bit more than a bit less variables. So the final model will be the model using lambda.min.  
+
+It is interesting to look which of the genes (features) have been selected to be relevant for survival, just in order to have an idea.
+```{r, eval = TRUE, echo = TRUE}
+#Creating a vector of the coefficients per variable (using lambda min) 
+coxph.coefficients = coef(fit.coxph, s = "lambda.min")
+
+#Selecting and printing the genes (features) that have been found relevant for survival.
+coxph.genes.selected = which(coxph.coefficients != 0)
+coxph.genes.selected
+```
+
+
+###Test the model 1: using predicted 'risk' scores from lambda.min
+
+We are now going into the test or validation phase. A selection of 16 genes has been outputted by the training data set, but this does not mean that the model can generalize to other data. The model has to be validated on the test data.  
+
+Using the `predict` function, we will now predict risk scores for the test data, based on the model selected above.
+```{r, eval = TRUE, echo = TRUE}
+score.testing = predict(fit.coxph, newx = gene_expression.test, s = "lambda.min")
+```
+
+A Cox Proportional Hazard model is specified for the Y values in the test sample and the risk scores for the X values of the test data (calculated with the training model). If the selected model would be perfect, there would be a one-on-one correlation between these two. The decision on the usefullness of the model for new data will be based on the significance of this output.
+
+```{r, eval = TRUE, echo = TRUE}
+fit.validate = coxph(Surv(clinical_data.test$dfs_time, clinical_data.test$dfs_event) ~ score.testing)
+
+summary(fit.validate)
+```
+
+Unfortunately, this model is not significant. This means that the genes (features) selected from the data set by the presented method do not have a significant effect on survival.
+
+###Testing the model 2: median split
+The median split is a second way of validating the result. Now it is already known that the model is not significant, so in this specific case it is less useful. However, it might show a different result than the previous validation, which would be interesting to investigate further.
+By making a graph, we should normally get a confirmation of the previous conclusion, so we should not see a very large difference between the lines of high risk (above median) versus low risk (below median).
+```{r, eval = TRUE, echo = TRUE}
+median_split.risk = ifelse(score.testing <=  median(score.testing), "low", "high")
+```
+
+The plot shows two KM survival curves, one for high risk and one for low risk.
+```{r, eval.after='fig.cap', echo = TRUE}
+fit.test.KM = survfit(
+  Surv(clinical_data.test$dfs_time, clinical_data.test$dfs_event) 
+  ~ median_split.risk, conf.type = "log-log")
+
+plot(fit.test.KM, col = 1:2, mark.time = TRUE, xlab = "Time (months)", ylab = "Survival (percent)")
+legend("topright", col = 1:2, lty = 1, legend = c("High risk", "Low risk"))
+title("Kaplan Meier curves for high and low risk groups")
+```
+This plot confirms that the prediction of survival by the calculated scores was not succesful. Unfortunately, the selected feaures have not been shown to predict disease free survival time.
+
+##5. Conclusion
+
+The conclusion of this paper is that using the methods presented here, no genes in this data set appear to be interesting for further research. A model has been estimated, and some of the genes have been identified as possibly interesting. However, in the validation process, the predicting capabilities of the identified genes (features) appear not significant, which means that the model does not generalize to other data well enough.  
+An interesting step for further research would be to look at a possible interaction between the gene expression data and the treatments. This would imply using a method for doing inference in a penalized regression context. As discussed earlier, recent work has been done on this topic by for example Kim, Pan and Shen, 2014, or Lockhart et al. 2014.
+
+##6. Literature
+Kim S, Pan W, Shen X. Penalized regression approaches to testing for quantitative trait-rare variant association. Frontiers in Genetics. 2014;5:121. doi:10.3389/fgene.2014.00121.  
+Lockhart R, Taylor J, Tibshirani R J, Tibshirani R. A significance test for the lasso. The Annals of Statistics. 2014; 42:2. Pp. 413 - 468. Accessed online on February 5th 2017 at https://arxiv.org/pdf/1301.7161.pdf.
